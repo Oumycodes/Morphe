@@ -1,54 +1,54 @@
 import mediapipe as mp
-import cv2
-import json
-import sys
-from pathlib import Path
+import cv2, json, sys, os, urllib.request
 
-mp_pose = mp.solutions.pose
-mp_seg = mp.solutions.selfie_segmentation
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "pose_landmarker.task")
+
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        print("Downloading pose model (~3MB)...")
+        url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+        urllib.request.urlretrieve(url, MODEL_PATH)
+        print("Done.")
 
 def measure(image_path: str) -> dict:
-    """Extract body measurements from a single photo."""
+    download_model()
+
     img = cv2.imread(image_path)
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if img is None:
+        return {"error": f"Could not read image: {image_path}"}
+
     h, w = img.shape[:2]
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-    with mp_pose.Pose(static_image_mode=True) as pose:
-        res = pose.process(rgb)
+    base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+    options = vision.PoseLandmarkerOptions(base_options=base_options)
 
-        if not res.pose_landmarks:
-            return {"error": "No body detected"}
+    with vision.PoseLandmarker.create_from_options(options) as landmarker:
+        result = landmarker.detect(mp_image)
 
-        lm = res.pose_landmarks.landmark
+    if not result.pose_landmarks:
+        return {"error": "No body detected — make sure full body is visible"}
 
-        # Key landmarks (normalized 0-1)
-        l_shoulder = lm[mp_pose.PoseLandmark.LEFT_SHOULDER]
-        r_shoulder = lm[mp_pose.PoseLandmark.RIGHT_SHOULDER]
-        l_hip = lm[mp_pose.PoseLandmark.LEFT_HIP]
-        r_hip = lm[mp_pose.PoseLandmark.RIGHT_HIP]
-        nose = lm[mp_pose.PoseLandmark.NOSE]
+    lm = result.pose_landmarks[0]
 
-        # Raw pixel widths
-        shoulder_w = abs(l_shoulder.x - r_shoulder.x) * w
-        hip_w = abs(l_hip.x - r_hip.x) * w
-        torso_h = abs(nose.y - ((l_hip.y + r_hip.y) / 2)) * h
+    shoulder_w = abs(lm[11].x - lm[12].x) * w
+    hip_w      = abs(lm[23].x - lm[24].x) * w
+    torso_h    = abs(lm[0].y - ((lm[23].y + lm[24].y) / 2)) * h
 
-        # Waist = midpoint between shoulders and hips
-        waist_y = (l_shoulder.y + l_hip.y) / 2
-        waist_w = shoulder_w * 0.75  # approximation v1
+    if torso_h == 0:
+        return {"error": "Could not measure torso height"}
 
-        # Normalize — divide by torso height
-        if torso_h == 0:
-            return {"error": "Could not measure torso"}
-
-        return {
-            "shoulder_ratio": round(shoulder_w / torso_h, 4),
-            "hip_ratio": round(hip_w / torso_h, 4),
-            "waist_ratio": round(waist_w / torso_h, 4),
-            "torso_px": round(torso_h, 1),
-        }
-
+    return {
+        "shoulder_ratio": round(shoulder_w / torso_h, 4),
+        "hip_ratio":      round(hip_w / torso_h, 4),
+        "waist_ratio":    round((shoulder_w * 0.75) / torso_h, 4),
+        "torso_px":       round(torso_h, 1),
+        "image_size":     f"{w}x{h}",
+    }
 
 if __name__ == "__main__":
     path = sys.argv[1] if len(sys.argv) > 1 else "test.jpg"
