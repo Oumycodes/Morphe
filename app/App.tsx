@@ -2,6 +2,7 @@ import { StatusBar } from 'expo-status-bar'
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native'
 import { useState } from 'react'
 import ScanScreen from './src/screens/ScanScreen'
+import DashboardScreen from './src/screens/DashboardScreen'
 
 const colors = {
   primary: '#1746A2',
@@ -15,14 +16,15 @@ const colors = {
   border: '#E8E7E3',
 }
 
-type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'done'
+type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'dashboard' | 'done'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash')
   if (screen === 'splash') return <Splash onNext={() => setScreen('goals')} />
   if (screen === 'goals') return <Goals onNext={() => setScreen('bodyparts')} />
-  if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('done')} />
-  if (screen === 'scan') return <ScanScreen onBack={() => setScreen('done')} />
+  if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} />
+  if (screen === 'scan') return <ScanScreen onBack={() => setScreen('dashboard')} />
+  if (screen === 'dashboard') return <DashboardScreen onScan={() => setScreen('scan')} />
   return <Done onScan={() => setScreen('scan')} />
 }
 
