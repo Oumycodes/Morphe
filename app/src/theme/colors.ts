@@ -1,0 +1,22 @@
+export const colors = {
+  primary: '#1746A2',
+  primaryTint: '#EFF6FF',
+  background: '#FAFAF8',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F2F1ED',
+  ink: '#0E0E10',
+  body: '#3E3E44',
+  muted: '#6A6A72',
+  hint: '#A8A8B2',
+  border: '#E8E7E3',
+  score: {
+    green: '#16A34A',
+    greenTint: '#DCFCE7',
+    yellow: '#CA8A04',
+    yellowTint: '#FEF9C3',
+    orange: '#EA580C',
+    orangeTint: '#FFEDD5',
+    red: '#DC2626',
+    redTint: '#FEE2E2',
+  },
+}
