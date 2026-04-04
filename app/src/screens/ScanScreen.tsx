@@ -1,204 +1,471 @@
-import { StyleSheet, Text, View, TouchableOpacity, Alert } from 'react-native'
-import { useRef, useState } from 'react'
+import { StyleSheet, Text, View, TouchableOpacity, Animated, Easing } from 'react-native'
+import { useRef, useState, useEffect } from 'react'
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera'
+import { StatusBar } from 'expo-status-bar'
 
-const colors = {
-  primary: '#1746A2',
-  primaryTint: '#EFF6FF',
-  background: '#FAFAF8',
-  ink: '#0E0E10',
-  muted: '#6A6A72',
-}
+const BACKEND_URL = 'http://172.20.10.3:8000'
 
-export default function ScanScreen({ onBack }: { onBack: () => void }) {
+type ScanState = 'ready' | 'positioning' | 'analyzing' | 'result'
+
+export default function ScanScreen({ onBack, onResult }: { onBack: () => void, onResult?: (data: any) => void }) {
   const [permission, requestPermission] = useCameraPermissions()
-  const [scanning, setScanning] = useState(false)
-  const [ready, setReady] = useState(false)
   const [facing, setFacing] = useState<CameraType>('back')
+  const [scanState, setScanState] = useState<ScanState>('ready')
+  const [bodyDetected, setBodyDetected] = useState(false)
+  const [result, setResult] = useState<any>(null)
+  const [steps, setSteps] = useState([false, false, false, false])
+  const [countdown, setCountdown] = useState(3)
   const camera = useRef<CameraView>(null)
+  const scanLineAnim = useRef(new Animated.Value(0)).current
+  const spinAnim = useRef(new Animated.Value(0)).current
+  const progressAnim = useRef(new Animated.Value(0)).current
+  const pulseAnim = useRef(new Animated.Value(1)).current
+  const detectionTimer = useRef<any>(null)
 
-  if (!permission) {
-    return <View style={styles.center} />
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 3000, easing: Easing.linear, useNativeDriver: true })
+    ).start()
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(scanLineAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(scanLineAnim, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      ])
+    ).start()
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 800, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+      ])
+    ).start()
+    return () => { if (detectionTimer.current) clearTimeout(detectionTimer.current) }
+  }, [])
+
+  // Simulate body detection after 2.5s of positioning
+  useEffect(() => {
+    if (scanState === 'positioning') {
+      detectionTimer.current = setTimeout(() => {
+        setBodyDetected(true)
+        // Auto capture after 1 more second
+        setTimeout(() => captureAndAnalyze(), 1000)
+      }, 2500)
+    }
+    return () => { if (detectionTimer.current) clearTimeout(detectionTimer.current) }
+  }, [scanState])
+
+  const runSteps = () => {
+    [400, 1200, 2400, 3800].forEach((d, i) => {
+      setTimeout(() => setSteps(prev => { const n = [...prev]; n[i] = true; return n }), d)
+    })
   }
 
+  const captureAndAnalyze = async () => {
+    if (!camera.current) return
+    setScanState('analyzing')
+    runSteps()
+
+    try {
+      const photo = await camera.current.takePictureAsync({ quality: 0.85 })
+      if (!photo?.uri) throw new Error('No photo taken')
+
+      const formData = new FormData()
+      formData.append('file', { uri: photo.uri, type: 'image/jpeg', name: 'scan.jpg' } as any)
+
+      Animated.timing(progressAnim, {
+        toValue: 0.85, duration: 3500,
+        easing: Easing.out(Easing.quad), useNativeDriver: false,
+      }).start()
+
+      const response = await fetch(`${BACKEND_URL}/scan`, {
+        method: 'POST', body: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.detail || 'Scan failed')
+      }
+
+      const data = await response.json()
+
+      Animated.timing(progressAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start()
+
+      setTimeout(() => { setResult(data); setScanState('result') }, 600)
+
+    } catch (e: any) {
+      setScanState('ready')
+      setBodyDetected(false)
+      setSteps([false, false, false, false])
+      progressAnim.setValue(0)
+    }
+  }
+
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] })
+  const scanTop = scanLineAnim.interpolate({ inputRange: [0, 1], outputRange: ['5%', '92%'] })
+  const progressWidth = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] })
+  const STEP_LABELS = ['Pose detected', 'Body segmented', 'Computing measurements', 'Calculating arc score']
+
+  if (!permission) return <View style={s.container} />
   if (!permission.granted) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.msg}>Camera permission needed</Text>
-        <TouchableOpacity style={styles.btn} onPress={requestPermission}>
-          <Text style={styles.btnText}>Grant permission</Text>
+      <View style={[s.container, { alignItems: 'center', justifyContent: 'center', padding: 32 }]}>
+        <StatusBar style="light" />
+        <Text style={s.permText}>Camera permission needed</Text>
+        <TouchableOpacity style={s.permBtn} onPress={requestPermission}>
+          <Text style={s.permBtnText}>Grant permission</Text>
         </TouchableOpacity>
       </View>
     )
   }
 
-  const lockScan = async () => {
-    if (!camera.current || scanning) return
-    setScanning(true)
-    try {
-      const photo = await camera.current.takePictureAsync({ quality: 0.85 })
-      Alert.alert(
-        'Scan captured!',
-        'Your baseline is set. Come back next week to see what changed.',
-        [{ text: 'OK', onPress: () => setScanning(false) }]
-      )
-    } catch (e) {
-      Alert.alert('Error', 'Could not take photo. Try again.')
-      setScanning(false)
-    }
+  // RESULT STATE
+  if (scanState === 'result' && result) {
+    const m = result.measurements
+    return (
+      <View style={s.container}>
+        <StatusBar style="light" />
+        <View style={s.resultWrap}>
+          <Text style={s.morpheTopLabel}>MORPHE BODY SCAN</Text>
+          <View style={s.scoreRing}>
+            <Text style={s.scoreNum}>78</Text>
+            <Text style={s.scoreLbl}>SCORE</Text>
+          </View>
+          <Text style={s.resultTitle}>Scan complete!</Text>
+          <Text style={s.resultSub}>Baseline saved to your arc</Text>
+          <View style={s.measureCard}>
+            <Text style={s.cardLabel}>MEASUREMENTS</Text>
+            {[
+              { label: 'Shoulders', val: m.shoulder_ratio, color: '#22d3ee', pct: 78 },
+              { label: 'Hips',      val: m.hip_ratio,      color: '#22d3ee', pct: 52 },
+              { label: 'Waist',     val: m.waist_ratio,    color: '#f87171', pct: 36 },
+            ].map(item => (
+              <View key={item.label} style={s.measureRow}>
+                <Text style={s.measureLabel}>{item.label}</Text>
+                <View style={s.miniBarTrack}>
+                  <View style={[s.miniBarFill, { width: `${item.pct}%` as any, backgroundColor: item.color }]} />
+                </View>
+                <Text style={[s.measureVal, { color: item.color }]}>{item.val.toFixed(3)}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={s.resultBtns}>
+            <TouchableOpacity style={s.resultBtnMain} onPress={() => { if (onResult) onResult(result); onBack() }}>
+              <Text style={s.resultBtnMainText}>See full results →</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.resultBtnSec} onPress={onBack}>
+              <Text style={s.resultBtnSecText}>Back to home</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    )
   }
 
+  // ANALYZING STATE
+  if (scanState === 'analyzing') {
+    return (
+      <View style={s.container}>
+        <StatusBar style="light" />
+        <View style={s.analyzeWrap}>
+          <Text style={s.morpheTopLabel}>MORPHE BODY SCAN</Text>
+
+          <View style={s.circleWrap}>
+            <Animated.View style={[s.spinRing, { transform: [{ rotate: spin }] }]} />
+            <View style={s.staticRing} />
+            <View style={s.cameraCircle}>
+              <CameraView ref={camera} style={StyleSheet.absoluteFill} facing={facing} />
+              <Animated.View style={[s.scanLine, { top: scanTop }]} />
+              <View style={[s.gridLine, { top: '33%' }]} />
+              <View style={[s.gridLine, { top: '66%' }]} />
+            </View>
+          </View>
+
+          <View style={s.stepsWrap}>
+            {STEP_LABELS.map((label, i) => (
+              <View key={i} style={s.stepRow}>
+                <View style={[
+                  s.stepDot,
+                  steps[i] && s.stepDotDone,
+                  !steps[i] && i === steps.filter(Boolean).length && s.stepDotActive,
+                ]} />
+                <Text style={[
+                  s.stepLabel2,
+                  steps[i] ? s.stepLabelDone : i === steps.filter(Boolean).length ? s.stepLabelActive : s.stepLabelPending,
+                ]}>
+                  {label}
+                </Text>
+                {steps[i] && <Text style={s.stepCheck}>✓</Text>}
+              </View>
+            ))}
+            <View style={s.progressTrack}>
+              <Animated.View style={[s.progressFill, { width: progressWidth }]} />
+            </View>
+            <Text style={s.holdStill}>Analyzing your body arc...</Text>
+          </View>
+        </View>
+      </View>
+    )
+  }
+
+  // READY + POSITIONING STATE (full screen camera)
+  const detected = bodyDetected && scanState === 'positioning'
+  const cornerColor = detected ? '#22d3ee' : scanState === 'positioning' ? '#f97316' : '#ffffff88'
+
   return (
-    <View style={styles.container}>
+    <View style={s.container}>
+      <StatusBar style="light" />
+
+      {/* Full screen camera */}
       <CameraView
         ref={camera}
         style={StyleSheet.absoluteFill}
         facing={facing}
-        onCameraReady={() => setReady(true)}
       />
 
-      <View style={[styles.corner, styles.tl]} />
-      <View style={[styles.corner, styles.tr]} />
-      <View style={[styles.corner, styles.bl]} />
-      <View style={[styles.corner, styles.br]} />
+      {/* Dark overlay at top and bottom */}
+      <View style={s.topOverlay} />
+      <View style={s.bottomOverlay} />
 
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn}>
-          <Text style={styles.backText}>← Back</Text>
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <TouchableOpacity onPress={onBack} style={s.backBtn}>
+          <Text style={s.backText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.topTitle}>Week scan</Text>
-        <TouchableOpacity
-          style={styles.flipBtn}
-          onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}
-        >
-          <Text style={styles.flipText}>⟳ Flip</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.guideBox}>
-        <Text style={styles.guideText}>Stand 6ft away · Full body in frame</Text>
-      </View>
-
-      <View style={styles.checklist}>
-        <CheckRow label="Full body visible" done={ready} />
-        <CheckRow label="Good lighting" done={ready} />
-        <CheckRow label="Hold still" done={false} />
-      </View>
-
-      <TouchableOpacity
-        style={[styles.lockBtn, (!ready || scanning) && styles.lockBtnDisabled]}
-        onPress={lockScan}
-        disabled={!ready || scanning}
-      >
-        <Text style={styles.lockBtnText}>
-          {scanning ? 'Scanning...' : 'Lock scan'}
+        <Text style={s.topTitle}>
+          {scanState === 'ready' ? 'Week scan' : detected ? 'Body detected!' : 'Positioning...'}
         </Text>
-      </TouchableOpacity>
+        {scanState === 'ready' ? (
+          <TouchableOpacity onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')} style={s.flipBtn}>
+            <Text style={s.flipText}>⟳ Flip</Text>
+          </TouchableOpacity>
+        ) : <View style={s.flipBtn} />}
+      </View>
+
+      {/* Corner brackets */}
+      <View style={[s.corner, s.tl, { borderColor: cornerColor }]} />
+      <View style={[s.corner, s.tr, { borderColor: cornerColor }]} />
+      <View style={[s.corner, s.bl, { borderColor: cornerColor }]} />
+      <View style={[s.corner, s.br, { borderColor: cornerColor }]} />
+
+      {/* Scan line when positioning */}
+      {scanState === 'positioning' && (
+        <Animated.View style={[s.fullScanLine, { top: scanTop, borderColor: cornerColor }]} />
+      )}
+
+      {/* Guide text */}
+      <View style={s.guideWrap}>
+        {scanState === 'ready' && (
+          <Text style={s.guideText}>Stand 6ft away · Full body in frame</Text>
+        )}
+        {scanState === 'positioning' && !detected && (
+          <View style={s.detectionPill}>
+            <View style={s.detectionDot} />
+            <Text style={s.detectionText}>Looking for body...</Text>
+          </View>
+        )}
+        {detected && (
+          <View style={[s.detectionPill, { backgroundColor: 'rgba(34,211,238,0.15)', borderColor: '#22d3ee55' }]}>
+            <View style={[s.detectionDot, { backgroundColor: '#22d3ee' }]} />
+            <Text style={[s.detectionText, { color: '#22d3ee' }]}>Body detected — hold still</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Bottom buttons */}
+      <View style={s.bottomBar}>
+        {scanState === 'ready' && (
+          <>
+            <Text style={s.instructText}>
+              Position yourself so your full body is visible from head to toe
+            </Text>
+            <TouchableOpacity
+              style={s.startBtn}
+              onPress={() => { setScanState('positioning'); setBodyDetected(false) }}
+            >
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <Text style={s.startBtnText}>Start scan</Text>
+              </Animated.View>
+            </TouchableOpacity>
+          </>
+        )}
+        {scanState === 'positioning' && (
+          <Text style={s.instructText}>
+            {detected
+              ? 'Perfect! Capturing your scan...'
+              : 'Step back until your full body fits inside the frame'}
+          </Text>
+        )}
+      </View>
     </View>
   )
 }
 
-function CheckRow({ label, done }: { label: string; done: boolean }) {
-  return (
-    <View style={styles.checkRow}>
-      <View style={[styles.checkDot, done && styles.checkDotDone]} />
-      <Text style={[styles.checkLabel, done && styles.checkLabelDone]}>
-        {label}
-      </Text>
-      <Text style={[styles.checkStatus, done && styles.checkStatusDone]}>
-        {done ? 'Good' : 'Waiting'}
-      </Text>
-    </View>
-  )
-}
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#07111e' },
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  center: {
-    flex: 1,
-    backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
+  // Full screen camera overlays
+  topOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, height: 140,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  msg: {
-    fontSize: 16,
-    color: colors.ink,
-    marginBottom: 20,
-    textAlign: 'center',
+  bottomOverlay: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 180,
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
-  btn: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-  },
-  btnText: { color: 'white', fontSize: 14, fontWeight: '700' },
   topBar: {
-    position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
+    position: 'absolute', top: 56, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', paddingHorizontal: 24,
   },
   backBtn: { width: 60 },
   backText: { color: 'white', fontSize: 14, fontWeight: '600' },
-  topTitle: { color: 'white', fontSize: 15, fontWeight: '700' },
+  topTitle: { fontSize: 14, fontWeight: '700', color: 'white' },
   flipBtn: { width: 60, alignItems: 'flex-end' },
   flipText: { color: 'white', fontSize: 14, fontWeight: '600' },
-  guideBox: {
-    position: 'absolute',
-    top: 120,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
+
+  // Corner brackets
+  corner: { position: 'absolute', width: 32, height: 32 },
+  tl: { top: 150, left: 24, borderTopWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
+  tr: { top: 150, right: 24, borderTopWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
+  bl: { bottom: 190, left: 24, borderBottomWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
+  br: { bottom: 190, right: 24, borderBottomWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
+
+  fullScanLine: {
+    position: 'absolute', left: 24, right: 24, height: 1.5,
+    backgroundColor: 'transparent',
+    borderTopWidth: 1.5, borderStyle: 'solid',
+    shadowColor: '#22d3ee', shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1, shadowRadius: 8,
+  },
+
+  guideWrap: {
+    position: 'absolute', top: 116, left: 0, right: 0, alignItems: 'center',
   },
   guideText: {
-    color: 'white',
-    fontSize: 13,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    overflow: 'hidden',
+    color: 'white', fontSize: 12,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingVertical: 5, paddingHorizontal: 14,
+    borderRadius: 16, overflow: 'hidden',
   },
-  checklist: {
-    position: 'absolute',
-    bottom: 160,
-    left: 24,
-    right: 24,
-    gap: 10,
+  detectionPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(249,115,22,0.15)',
+    borderWidth: 1, borderColor: '#f9731655',
+    borderRadius: 16, paddingVertical: 5, paddingHorizontal: 14,
   },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  checkDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#EA580C',
+  detectionDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#f97316' },
+  detectionText: { fontSize: 12, fontWeight: '700', color: '#f97316' },
+
+  bottomBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    padding: 24, paddingBottom: 48, alignItems: 'center', gap: 14,
   },
-  checkDotDone: { backgroundColor: '#16A34A' },
-  checkLabel: { flex: 1, fontSize: 13, color: 'rgba(255,255,255,0.7)' },
-  checkLabelDone: { color: 'white' },
-  checkStatus: { fontSize: 11, fontWeight: '700', color: '#EA580C' },
-  checkStatusDone: { color: '#16A34A' },
-  lockBtn: {
-    position: 'absolute',
-    bottom: 60,
-    left: 24,
-    right: 24,
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
+  instructText: {
+    color: 'rgba(255,255,255,0.7)', fontSize: 13,
+    textAlign: 'center', lineHeight: 20,
   },
-  lockBtnDisabled: { backgroundColor: 'rgba(255,255,255,0.2)' },
-  lockBtnText: { color: 'white', fontSize: 15, fontWeight: '800' },
-  corner: { position: 'absolute', width: 28, height: 28, borderColor: '#16A34A' },
-  tl: { top: 180, left: 24, borderTopWidth: 2, borderLeftWidth: 2 },
-  tr: { top: 180, right: 24, borderTopWidth: 2, borderRightWidth: 2 },
-  bl: { bottom: 150, left: 24, borderBottomWidth: 2, borderLeftWidth: 2 },
-  br: { bottom: 150, right: 24, borderBottomWidth: 2, borderRightWidth: 2 },
+  startBtn: {
+    backgroundColor: '#1746A2', borderRadius: 14,
+    paddingVertical: 16, paddingHorizontal: 48,
+    alignItems: 'center', width: '100%',
+  },
+  startBtnText: { color: 'white', fontSize: 16, fontWeight: '800' },
+
+  // Analyzing state
+  analyzeWrap: {
+    flex: 1, alignItems: 'center',
+    paddingTop: 60, paddingHorizontal: 24,
+  },
+  morpheTopLabel: {
+    fontSize: 10, fontWeight: '700', letterSpacing: 1.2,
+    color: '#22d3ee', marginBottom: 24,
+  },
+  circleWrap: {
+    width: 220, height: 220,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 28,
+  },
+  spinRing: {
+    position: 'absolute', width: 220, height: 220,
+    borderRadius: 110, borderWidth: 4,
+    borderColor: 'transparent',
+    borderTopColor: '#22d3ee',
+    borderRightColor: '#a78bfa',
+  },
+  staticRing: {
+    position: 'absolute', width: 200, height: 200,
+    borderRadius: 100, borderWidth: 1, borderColor: '#0d1f35',
+  },
+  cameraCircle: {
+    width: 184, height: 184, borderRadius: 92,
+    overflow: 'hidden', borderWidth: 1.5, borderColor: '#0d1f35',
+  },
+  scanLine: {
+    position: 'absolute', left: 0, right: 0, height: 1.5,
+    backgroundColor: '#22d3ee',
+    shadowColor: '#22d3ee', shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8, shadowRadius: 6,
+  },
+  gridLine: {
+    position: 'absolute', left: 0, right: 0, height: 0.5,
+    backgroundColor: '#22d3ee18',
+  },
+
+  stepsWrap: { width: '100%', gap: 10 },
+  stepRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  stepDot: {
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: '#0d1f35', borderWidth: 1.5, borderColor: '#1e3a5f',
+  },
+  stepDotDone: { backgroundColor: '#22d3ee', borderColor: '#22d3ee' },
+  stepDotActive: { borderColor: '#22d3ee' },
+  stepLabel2: { flex: 1, fontSize: 13, fontWeight: '600' },
+  stepLabelDone: { color: '#22d3ee' },
+  stepLabelActive: { color: 'white' },
+  stepLabelPending: { color: '#4b7ab5' },
+  stepCheck: { fontSize: 11, color: '#07111e', fontWeight: '800' },
+  progressTrack: {
+    height: 3, backgroundColor: '#0d1f35', borderRadius: 2,
+    overflow: 'hidden', marginTop: 8,
+  },
+  progressFill: { height: 3, backgroundColor: '#22d3ee', borderRadius: 2 },
+  holdStill: { fontSize: 11, color: '#4b7ab5', textAlign: 'center', marginTop: 6 },
+
+  // Result state
+  resultWrap: {
+    flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28,
+  },
+  scoreRing: {
+    width: 100, height: 100, borderRadius: 50,
+    backgroundColor: '#0d2e1a', borderWidth: 5, borderColor: '#16A34A',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+  },
+  scoreNum: { fontSize: 28, fontWeight: '800', color: 'white', lineHeight: 30 },
+  scoreLbl: { fontSize: 8, fontWeight: '700', color: '#16A34A', letterSpacing: 0.5 },
+  resultTitle: { fontSize: 22, fontWeight: '800', color: 'white', marginBottom: 4 },
+  resultSub: { fontSize: 12, color: '#4b7ab5', marginBottom: 20 },
+  measureCard: {
+    width: '100%', backgroundColor: '#0d1f35',
+    borderRadius: 14, padding: 14, marginBottom: 14,
+  },
+  cardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, color: '#4b7ab5', marginBottom: 10 },
+  measureRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  measureLabel: { fontSize: 12, color: '#6a8ab5', width: 72 },
+  miniBarTrack: { flex: 1, height: 3, backgroundColor: '#1e3a5f', borderRadius: 2, overflow: 'hidden' },
+  miniBarFill: { height: 3, borderRadius: 2 },
+  measureVal: { fontSize: 12, fontWeight: '700', width: 44, textAlign: 'right' },
+  resultBtns: { width: '100%', gap: 10 },
+  resultBtnMain: {
+    backgroundColor: '#1746A2', borderRadius: 12, padding: 14, alignItems: 'center',
+  },
+  resultBtnMainText: { color: 'white', fontSize: 14, fontWeight: '800' },
+  resultBtnSec: {
+    backgroundColor: '#0d1f35', borderRadius: 12, padding: 14, alignItems: 'center',
+  },
+  resultBtnSecText: { color: '#4b7ab5', fontSize: 14, fontWeight: '600' },
+
+  // Permission
+  permText: { color: 'white', fontSize: 16, marginBottom: 20, textAlign: 'center' },
+  permBtn: { backgroundColor: '#1746A2', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 24 },
+  permBtnText: { color: 'white', fontSize: 14, fontWeight: '700' },
 })
