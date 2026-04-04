@@ -8,7 +8,7 @@ type ScanState = 'ready' | 'positioning' | 'analyzing' | 'result'
 
 export default function ScanScreen({ onBack, onResult }: { onBack: () => void, onResult?: (data: any) => void }) {
   const [permission, requestPermission] = useCameraPermissions()
-  const [facing, setFacing] = useState<CameraType>('back')
+  const [facing, setFacing] = useState<CameraType>('front')
   const [scanState, setScanState] = useState<ScanState>('ready')
   const [bodyDetected, setBodyDetected] = useState(false)
   const [result, setResult] = useState<any>(null)
