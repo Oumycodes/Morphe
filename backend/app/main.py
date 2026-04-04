@@ -1,9 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import mediapipe as mp
 import cv2
 import numpy as np
-import json
 import os
 import urllib.request
 from mediapipe.tasks import python
@@ -39,28 +39,84 @@ def measure_image(img_array: np.ndarray) -> dict:
         return {"error": "No body detected"}
     lm = result.pose_landmarks[0]
     shoulder_w = abs(lm[11].x - lm[12].x) * w
-    hip_w = abs(lm[23].x - lm[24].x) * w
-    torso_h = abs(lm[0].y - ((lm[23].y + lm[24].y) / 2)) * h
+    hip_w      = abs(lm[23].x - lm[24].x) * w
+    torso_h    = abs(lm[0].y - ((lm[23].y + lm[24].y) / 2)) * h
     if torso_h == 0:
         return {"error": "Could not measure torso"}
     return {
         "shoulder_ratio": round(shoulder_w / torso_h, 4),
-        "hip_ratio": round(hip_w / torso_h, 4),
-        "waist_ratio": round((shoulder_w * 0.75) / torso_h, 4),
-        "torso_px": round(torso_h, 1),
+        "hip_ratio":      round(hip_w / torso_h, 4),
+        "waist_ratio":    round((shoulder_w * 0.75) / torso_h, 4),
+        "torso_px":       round(torso_h, 1),
     }
 
-def calculate_score(measurements: dict, prev_measurements: dict | None) -> int:
-    if not prev_measurements:
-        return 50
+class ScoreRequest(BaseModel):
+    current: dict
+    previous: dict | None = None
+    goals: list[str] = []
+
+def calculate_score(current: dict, previous: dict | None, goals: list[str]) -> dict:
+    if not previous:
+        return {
+            "score": 50,
+            "grade": "yellow",
+            "label": "Baseline set",
+            "deltas": {},
+            "pts_change": 0,
+        }
+
+    deltas = {}
     score = 50
-    shoulder_delta = measurements["shoulder_ratio"] - prev_measurements["shoulder_ratio"]
-    hip_delta = measurements["hip_ratio"] - prev_measurements["hip_ratio"]
-    waist_delta = measurements["waist_ratio"] - prev_measurements["waist_ratio"]
-    score += shoulder_delta * 200
-    score += hip_delta * 200
-    score -= waist_delta * 100
-    return max(0, min(100, round(score)))
+
+    # Shoulder growth — positive is good for muscle/recomp goals
+    sh_delta = ((current["shoulder_ratio"] - previous["shoulder_ratio"]) / previous["shoulder_ratio"]) * 100
+    deltas["shoulders"] = round(sh_delta, 2)
+
+    # Hip growth — positive is good for glute goals
+    hip_delta = ((current["hip_ratio"] - previous["hip_ratio"]) / previous["hip_ratio"]) * 100
+    deltas["hips"] = round(hip_delta, 2)
+
+    # Waist — negative (smaller) is good for fat loss/recomp
+    waist_delta = ((current["waist_ratio"] - previous["waist_ratio"]) / previous["waist_ratio"]) * 100
+    deltas["waist"] = round(waist_delta, 2)
+
+    # Score calculation based on goals
+    if "muscle" in goals or "recomp" in goals:
+        score += sh_delta * 8
+        score += hip_delta * 10
+        score -= waist_delta * 4
+    elif "fat" in goals:
+        score -= waist_delta * 12
+        score += sh_delta * 4
+    elif "posture" in goals:
+        # Symmetry focus — penalise big asymmetry
+        score += sh_delta * 5
+        score += hip_delta * 5
+    else:
+        score += sh_delta * 6
+        score += hip_delta * 8
+        score -= waist_delta * 5
+
+    score = max(0, min(100, round(score)))
+
+    if score >= 80:
+        grade, label = "green", "Crushing it"
+    elif score >= 60:
+        grade, label = "yellow", "Steady progress"
+    elif score >= 40:
+        grade, label = "orange", "Slow week"
+    else:
+        grade, label = "red", "Needs a push"
+
+    pts_change = round(score - 50)
+
+    return {
+        "score": score,
+        "grade": grade,
+        "label": label,
+        "deltas": deltas,
+        "pts_change": pts_change,
+    }
 
 @app.get("/")
 def root():
@@ -68,6 +124,36 @@ def root():
 
 @app.post("/scan")
 async def scan(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        np_arr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Invalid image")
+        measurements = measure_image(img)
+        if "error" in measurements:
+            raise HTTPException(status_code=422, detail=measurements["error"])
+        return {
+            "success": True,
+            "measurements": measurements,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/score")
+async def score(req: ScoreRequest):
+    try:
+        result = calculate_score(req.current, req.previous, req.goals)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/scan-and-score")
+async def scan_and_score(
+    file: UploadFile = File(...),
+):
     try:
         contents = await file.read()
         np_arr = np.frombuffer(contents, np.uint8)

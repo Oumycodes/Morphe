@@ -2,8 +2,7 @@ import { StyleSheet, Text, View, TouchableOpacity, Animated, Easing } from 'reac
 import { useRef, useState, useEffect } from 'react'
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera'
 import { StatusBar } from 'expo-status-bar'
-
-const BACKEND_URL = 'http://172.20.10.3:8000'
+import { submitScan } from '../api/scans'
 
 type ScanState = 'ready' | 'positioning' | 'analyzing' | 'result'
 
@@ -14,7 +13,6 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
   const [bodyDetected, setBodyDetected] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [steps, setSteps] = useState([false, false, false, false])
-  const [countdown, setCountdown] = useState(3)
   const camera = useRef<CameraView>(null)
   const scanLineAnim = useRef(new Animated.Value(0)).current
   const spinAnim = useRef(new Animated.Value(0)).current
@@ -41,14 +39,14 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
     return () => { if (detectionTimer.current) clearTimeout(detectionTimer.current) }
   }, [])
 
-  // Simulate body detection after 2.5s of positioning
   useEffect(() => {
     if (scanState === 'positioning') {
+      // 4 seconds to get into position
       detectionTimer.current = setTimeout(() => {
         setBodyDetected(true)
-        // Auto capture after 1 more second
-        setTimeout(() => captureAndAnalyze(), 1000)
-      }, 2500)
+        // 3 more seconds holding still before capture
+        setTimeout(() => captureAndAnalyze(), 3000)
+      }, 4000)
     }
     return () => { if (detectionTimer.current) clearTimeout(detectionTimer.current) }
   }, [scanState])
@@ -68,25 +66,12 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
       const photo = await camera.current.takePictureAsync({ quality: 0.85 })
       if (!photo?.uri) throw new Error('No photo taken')
 
-      const formData = new FormData()
-      formData.append('file', { uri: photo.uri, type: 'image/jpeg', name: 'scan.jpg' } as any)
-
       Animated.timing(progressAnim, {
         toValue: 0.85, duration: 3500,
         easing: Easing.out(Easing.quad), useNativeDriver: false,
       }).start()
 
-      const response = await fetch(`${BACKEND_URL}/scan`, {
-        method: 'POST', body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-
-      if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.detail || 'Scan failed')
-      }
-
-      const data = await response.json()
+      const data = await submitScan(photo.uri)
 
       Animated.timing(progressAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start()
 
@@ -121,23 +106,33 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
   // RESULT STATE
   if (scanState === 'result' && result) {
     const m = result.measurements
+    const scoreData = result.score
+    const score = scoreData?.score || 50
+    const scoreColor = score >= 80 ? '#16A34A' : score >= 60 ? '#CA8A04' : score >= 40 ? '#EA580C' : '#DC2626'
+    const scoreTint = score >= 80 ? '#0d2e1a' : score >= 60 ? '#1a1500' : score >= 40 ? '#1a0e00' : '#1a0000'
+
     return (
       <View style={s.container}>
         <StatusBar style="light" />
         <View style={s.resultWrap}>
           <Text style={s.morpheTopLabel}>MORPHE BODY SCAN</Text>
-          <View style={s.scoreRing}>
-            <Text style={s.scoreNum}>78</Text>
-            <Text style={s.scoreLbl}>SCORE</Text>
+
+          <View style={[s.scoreRing, { borderColor: scoreColor, backgroundColor: scoreTint }]}>
+            <Text style={s.scoreNum}>{score}</Text>
+            <Text style={[s.scoreLbl, { color: scoreColor }]}>SCORE</Text>
           </View>
-          <Text style={s.resultTitle}>Scan complete!</Text>
-          <Text style={s.resultSub}>Baseline saved to your arc</Text>
+
+          <Text style={s.resultTitle}>{scoreData?.label || 'Scan complete!'}</Text>
+          <Text style={s.resultSub}>
+            Week {result.weekNumber} · {scoreData?.pts_change > 0 ? '+' : ''}{scoreData?.pts_change || 0} pts
+          </Text>
+
           <View style={s.measureCard}>
             <Text style={s.cardLabel}>MEASUREMENTS</Text>
             {[
-              { label: 'Shoulders', val: m.shoulder_ratio, color: '#22d3ee', pct: 78 },
-              { label: 'Hips',      val: m.hip_ratio,      color: '#22d3ee', pct: 52 },
-              { label: 'Waist',     val: m.waist_ratio,    color: '#f87171', pct: 36 },
+              { label: 'Shoulders', val: m.shoulder_ratio, color: '#22d3ee', pct: Math.min(m.shoulder_ratio * 100, 100) },
+              { label: 'Hips',      val: m.hip_ratio,      color: '#22d3ee', pct: Math.min(m.hip_ratio * 100, 100) },
+              { label: 'Waist',     val: m.waist_ratio,    color: '#f87171', pct: Math.min(m.waist_ratio * 100, 100) },
             ].map(item => (
               <View key={item.label} style={s.measureRow}>
                 <Text style={s.measureLabel}>{item.label}</Text>
@@ -148,6 +143,23 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
               </View>
             ))}
           </View>
+
+          {scoreData?.deltas && Object.keys(scoreData.deltas).length > 0 && (
+            <View style={s.deltaCard}>
+              <Text style={s.cardLabel}>VS LAST WEEK</Text>
+              <View style={s.deltaRow}>
+                {Object.entries(scoreData.deltas).map(([key, val]: any) => (
+                  <View key={key} style={s.deltaItem}>
+                    <Text style={[s.deltaVal, { color: val >= 0 ? '#22d3ee' : '#f87171' }]}>
+                      {val >= 0 ? '+' : ''}{val.toFixed(1)}%
+                    </Text>
+                    <Text style={s.deltaLabel}>{key}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
           <View style={s.resultBtns}>
             <TouchableOpacity style={s.resultBtnMain} onPress={() => { if (onResult) onResult(result); onBack() }}>
               <Text style={s.resultBtnMainText}>See full results →</Text>
@@ -207,7 +219,7 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
     )
   }
 
-  // READY + POSITIONING STATE (full screen camera)
+  // READY + POSITIONING STATE
   const detected = bodyDetected && scanState === 'positioning'
   const cornerColor = detected ? '#22d3ee' : scanState === 'positioning' ? '#f97316' : '#ffffff88'
 
@@ -215,24 +227,17 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
     <View style={s.container}>
       <StatusBar style="light" />
 
-      {/* Full screen camera */}
-      <CameraView
-        ref={camera}
-        style={StyleSheet.absoluteFill}
-        facing={facing}
-      />
+      <CameraView ref={camera} style={StyleSheet.absoluteFill} facing={facing} />
 
-      {/* Dark overlay at top and bottom */}
       <View style={s.topOverlay} />
       <View style={s.bottomOverlay} />
 
-      {/* Top bar */}
       <View style={s.topBar}>
         <TouchableOpacity onPress={onBack} style={s.backBtn}>
           <Text style={s.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={s.topTitle}>
-          {scanState === 'ready' ? 'Week scan' : detected ? 'Body detected!' : 'Positioning...'}
+          {scanState === 'ready' ? 'Week scan' : detected ? 'Body detected!' : 'Get into position'}
         </Text>
         {scanState === 'ready' ? (
           <TouchableOpacity onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')} style={s.flipBtn}>
@@ -241,21 +246,18 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
         ) : <View style={s.flipBtn} />}
       </View>
 
-      {/* Corner brackets */}
       <View style={[s.corner, s.tl, { borderColor: cornerColor }]} />
       <View style={[s.corner, s.tr, { borderColor: cornerColor }]} />
       <View style={[s.corner, s.bl, { borderColor: cornerColor }]} />
       <View style={[s.corner, s.br, { borderColor: cornerColor }]} />
 
-      {/* Scan line when positioning */}
       {scanState === 'positioning' && (
         <Animated.View style={[s.fullScanLine, { top: scanTop, borderColor: cornerColor }]} />
       )}
 
-      {/* Guide text */}
       <View style={s.guideWrap}>
         {scanState === 'ready' && (
-          <Text style={s.guideText}>Stand 6ft away · Full body in frame</Text>
+          <Text style={s.guideText}>Stand 6ft away · full body in frame</Text>
         )}
         {scanState === 'positioning' && !detected && (
           <View style={s.detectionPill}>
@@ -266,12 +268,13 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
         {detected && (
           <View style={[s.detectionPill, { backgroundColor: 'rgba(34,211,238,0.15)', borderColor: '#22d3ee55' }]}>
             <View style={[s.detectionDot, { backgroundColor: '#22d3ee' }]} />
-            <Text style={[s.detectionText, { color: '#22d3ee' }]}>Body detected — hold still</Text>
+            <Text style={[s.detectionText, { color: '#22d3ee' }]}>
+              Body detected — stay still, capturing soon...
+            </Text>
           </View>
         )}
       </View>
 
-      {/* Bottom buttons */}
       <View style={s.bottomBar}>
         {scanState === 'ready' && (
           <>
@@ -291,8 +294,8 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
         {scanState === 'positioning' && (
           <Text style={s.instructText}>
             {detected
-              ? 'Perfect! Capturing your scan...'
-              : 'Step back until your full body fits inside the frame'}
+              ? 'Perfect — hold completely still...'
+              : 'Step back · full body in frame · hold still'}
           </Text>
         )}
       </View>
@@ -302,8 +305,6 @@ export default function ScanScreen({ onBack, onResult }: { onBack: () => void, o
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#07111e' },
-
-  // Full screen camera overlays
   topOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, height: 140,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -322,14 +323,11 @@ const s = StyleSheet.create({
   topTitle: { fontSize: 14, fontWeight: '700', color: 'white' },
   flipBtn: { width: 60, alignItems: 'flex-end' },
   flipText: { color: 'white', fontSize: 14, fontWeight: '600' },
-
-  // Corner brackets
   corner: { position: 'absolute', width: 32, height: 32 },
   tl: { top: 150, left: 24, borderTopWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
   tr: { top: 150, right: 24, borderTopWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
   bl: { bottom: 190, left: 24, borderBottomWidth: 2.5, borderLeftWidth: 2.5, borderRadius: 3 },
   br: { bottom: 190, right: 24, borderBottomWidth: 2.5, borderRightWidth: 2.5, borderRadius: 3 },
-
   fullScanLine: {
     position: 'absolute', left: 24, right: 24, height: 1.5,
     backgroundColor: 'transparent',
@@ -337,7 +335,6 @@ const s = StyleSheet.create({
     shadowColor: '#22d3ee', shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1, shadowRadius: 8,
   },
-
   guideWrap: {
     position: 'absolute', top: 116, left: 0, right: 0, alignItems: 'center',
   },
@@ -355,7 +352,6 @@ const s = StyleSheet.create({
   },
   detectionDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#f97316' },
   detectionText: { fontSize: 12, fontWeight: '700', color: '#f97316' },
-
   bottomBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     padding: 24, paddingBottom: 48, alignItems: 'center', gap: 14,
@@ -370,8 +366,6 @@ const s = StyleSheet.create({
     alignItems: 'center', width: '100%',
   },
   startBtnText: { color: 'white', fontSize: 16, fontWeight: '800' },
-
-  // Analyzing state
   analyzeWrap: {
     flex: 1, alignItems: 'center',
     paddingTop: 60, paddingHorizontal: 24,
@@ -410,7 +404,6 @@ const s = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, height: 0.5,
     backgroundColor: '#22d3ee18',
   },
-
   stepsWrap: { width: '100%', gap: 10 },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   stepDot: {
@@ -430,23 +423,26 @@ const s = StyleSheet.create({
   },
   progressFill: { height: 3, backgroundColor: '#22d3ee', borderRadius: 2 },
   holdStill: { fontSize: 11, color: '#4b7ab5', textAlign: 'center', marginTop: 6 },
-
-  // Result state
   resultWrap: {
     flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28,
   },
   scoreRing: {
     width: 100, height: 100, borderRadius: 50,
-    backgroundColor: '#0d2e1a', borderWidth: 5, borderColor: '#16A34A',
+    borderWidth: 5,
     alignItems: 'center', justifyContent: 'center', marginBottom: 16,
   },
   scoreNum: { fontSize: 28, fontWeight: '800', color: 'white', lineHeight: 30 },
-  scoreLbl: { fontSize: 8, fontWeight: '700', color: '#16A34A', letterSpacing: 0.5 },
+  scoreLbl: { fontSize: 8, fontWeight: '700', letterSpacing: 0.5 },
   resultTitle: { fontSize: 22, fontWeight: '800', color: 'white', marginBottom: 4 },
   resultSub: { fontSize: 12, color: '#4b7ab5', marginBottom: 20 },
   measureCard: {
     width: '100%', backgroundColor: '#0d1f35',
+    borderRadius: 14, padding: 14, marginBottom: 10,
+  },
+  deltaCard: {
+    width: '100%', backgroundColor: '#0a1628',
     borderRadius: 14, padding: 14, marginBottom: 14,
+    borderWidth: 0.5, borderColor: '#1e3a5f',
   },
   cardLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 0.8, color: '#4b7ab5', marginBottom: 10 },
   measureRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
@@ -454,6 +450,10 @@ const s = StyleSheet.create({
   miniBarTrack: { flex: 1, height: 3, backgroundColor: '#1e3a5f', borderRadius: 2, overflow: 'hidden' },
   miniBarFill: { height: 3, borderRadius: 2 },
   measureVal: { fontSize: 12, fontWeight: '700', width: 44, textAlign: 'right' },
+  deltaRow: { flexDirection: 'row', justifyContent: 'space-around' },
+  deltaItem: { alignItems: 'center', gap: 4 },
+  deltaVal: { fontSize: 16, fontWeight: '800' },
+  deltaLabel: { fontSize: 10, color: '#4b7ab5' },
   resultBtns: { width: '100%', gap: 10 },
   resultBtnMain: {
     backgroundColor: '#1746A2', borderRadius: 12, padding: 14, alignItems: 'center',
@@ -463,8 +463,6 @@ const s = StyleSheet.create({
     backgroundColor: '#0d1f35', borderRadius: 12, padding: 14, alignItems: 'center',
   },
   resultBtnSecText: { color: '#4b7ab5', fontSize: 14, fontWeight: '600' },
-
-  // Permission
   permText: { color: 'white', fontSize: 16, marginBottom: 20, textAlign: 'center' },
   permBtn: { backgroundColor: '#1746A2', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 24 },
   permBtnText: { color: 'white', fontSize: 14, fontWeight: '700' },
