@@ -48,7 +48,13 @@ function getHour() {
   return 'Good evening'
 }
 
-export default function DashboardScreen({ onScan }: { onScan: () => void }) {
+export default function DashboardScreen({
+  onScan,
+  onResults,
+}: {
+  onScan: () => void
+  onResults: () => void
+}) {
   const sc = getScoreColor(MOCK.score)
 
   return (
@@ -56,7 +62,6 @@ export default function DashboardScreen({ onScan }: { onScan: () => void }) {
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
-        {/* Header */}
         <View style={s.header}>
           <View>
             <Text style={s.greeting}>{getHour()},</Text>
@@ -68,7 +73,6 @@ export default function DashboardScreen({ onScan }: { onScan: () => void }) {
           </View>
         </View>
 
-        {/* Score card */}
         <View style={s.scoreCard}>
           <View style={[s.scoreRing, { borderColor: sc.color, backgroundColor: sc.tint }]}>
             <Text style={s.scoreNum}>{MOCK.score}</Text>
@@ -83,26 +87,24 @@ export default function DashboardScreen({ onScan }: { onScan: () => void }) {
           </View>
         </View>
 
-        {/* Muscle grid */}
         <Text style={s.sectionTitle}>Muscle tracking</Text>
         <View style={s.grid}>
           {MOCK.muscles.map(m => (
             <MuscleCard key={m.id} {...m} />
           ))}
-          <TouchableOpacity style={s.scanNowCard} onPress={onScan}>
+          <TouchableOpacity style={s.scanNowCard} onPress={onResults}>
             <Text style={s.scanNowWeek}>Week 9</Text>
-            <Text style={s.scanNowLabel}>scan</Text>
-            <Text style={s.scanNowArrow}>Scan now →</Text>
+            <Text style={s.scanNowLabel}>Results</Text>
+            <Text style={s.scanNowArrow}>View now →</Text>
           </TouchableOpacity>
         </View>
 
       </ScrollView>
 
-      {/* Bottom nav */}
       <View style={s.nav}>
         <NavItem label="Home" active />
         <NavItem label="Scan" onPress={onScan} />
-        <NavItem label="Progress" />
+        <NavItem label="Progress" onPress={onResults} />
         <NavItem label="Profile" />
       </View>
     </View>
@@ -121,7 +123,7 @@ function MuscleCard({ label, pct, weeks }: { label: string; pct: number; weeks: 
         {positive ? '+' : ''}{pct}%
       </Text>
       <View style={s.barTrack}>
-        <View style={[s.barFill, { width: `${barWidth}%`, backgroundColor: barColor }]} />
+        <View style={[s.barFill, { width: `${barWidth}%` as any, backgroundColor: barColor }]} />
       </View>
       <Text style={s.muscleWeeks}>{weeks} week arc</Text>
     </View>
@@ -193,17 +195,8 @@ const s = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   scanBtnText: { fontSize: 10, fontWeight: '800', color: 'white', letterSpacing: 0.4 },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.ink,
-    marginBottom: 12,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.ink, marginBottom: 12 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   muscleCard: {
     backgroundColor: colors.surface,
     borderRadius: 14,
@@ -219,18 +212,8 @@ const s = StyleSheet.create({
     color: colors.hint,
     marginBottom: 6,
   },
-  musclePct: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.8,
-    marginBottom: 8,
-  },
-  barTrack: {
-    height: 4,
-    backgroundColor: colors.background,
-    borderRadius: 2,
-    marginBottom: 6,
-  },
+  musclePct: { fontSize: 22, fontWeight: '800', letterSpacing: -0.8, marginBottom: 8 },
+  barTrack: { height: 4, backgroundColor: colors.background, borderRadius: 2, marginBottom: 6 },
   barFill: { height: 4, borderRadius: 2 },
   muscleWeeks: { fontSize: 10, color: colors.hint },
   scanNowCard: {
@@ -252,10 +235,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.surface,
     borderTopWidth: 0.5,
     borderTopColor: colors.border,
-    paddingBottom: 28,
+    paddingBottom: 34,
     paddingTop: 12,
+    zIndex: 100,
+    elevation: 10,
   },
-  navItem: { flex: 1, alignItems: 'center' },
+  navItem: { flex: 1, alignItems: 'center', paddingVertical: 4 },
   navLabel: { fontSize: 11, fontWeight: '600', color: colors.hint },
   navLabelActive: { color: colors.primary },
 })

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, TouchableOpacity } from 'react-native'
 import { useState } from 'react'
 import ScanScreen from './src/screens/ScanScreen'
 import DashboardScreen from './src/screens/DashboardScreen'
+import ResultsScreen from './src/screens/ResultsScreen'
 
 const colors = {
   primary: '#1746A2',
@@ -16,7 +17,7 @@ const colors = {
   border: '#E8E7E3',
 }
 
-type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'dashboard' | 'done'
+type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'dashboard' | 'results' | 'done'
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash')
@@ -24,7 +25,8 @@ export default function App() {
   if (screen === 'goals') return <Goals onNext={() => setScreen('bodyparts')} />
   if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} />
   if (screen === 'scan') return <ScanScreen onBack={() => setScreen('dashboard')} />
-  if (screen === 'dashboard') return <DashboardScreen onScan={() => setScreen('scan')} />
+  if (screen === 'dashboard') return <DashboardScreen onScan={() => setScreen('scan')} onResults={() => setScreen('results')} />
+  if (screen === 'results') return <ResultsScreen onBack={() => setScreen('dashboard')} />
   return <Done onScan={() => setScreen('scan')} />
 }
 
