@@ -25,6 +25,7 @@ export default function App() {
   const [session, setSession] = useState<any>(null)
   const [screen, setScreen] = useState<Screen>('splash')
   const [checked, setChecked] = useState(false)
+  const [goals, setGoals] = useState<string[]>([])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -40,8 +41,8 @@ export default function App() {
   if (!session) return <AuthScreen onAuth={() => setScreen('splash')} />
 
   if (screen === 'splash') return <Splash onNext={() => setScreen('goals')} />
-  if (screen === 'goals') return <Goals onNext={() => setScreen('bodyparts')} />
-  if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} />
+  if (screen === 'goals') return <Goals onNext={(g) => { setGoals(g); setScreen('bodyparts') }} />
+  if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} goals={goals} />
   if (screen === 'scan') return <ScanScreen onBack={() => setScreen('dashboard')} />
   if (screen === 'dashboard') return <DashboardScreen onScan={() => setScreen('scan')} onResults={() => setScreen('results')} />
   if (screen === 'results') return <ResultsScreen onBack={() => setScreen('dashboard')} />
@@ -72,7 +73,7 @@ const GOALS = [
   { id: 'overall', label: 'Track overall progress', sub: 'Full body evolution over time' },
 ]
 
-function Goals({ onNext }: { onNext: () => void }) {
+function Goals({ onNext }: { onNext: (goals: string[]) => void }) {
   const [selected, setSelected] = useState<string[]>([])
   const toggle = (id: string) =>
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -106,7 +107,7 @@ function Goals({ onNext }: { onNext: () => void }) {
       </View>
       <TouchableOpacity
         style={[s.btnMain, selected.length === 0 && s.btnDisabled]}
-        onPress={onNext}
+        onPress={() => onNext(selected)}
         disabled={selected.length === 0}
       >
         <Text style={s.btnMainText}>Continue</Text>
@@ -131,10 +132,32 @@ const BODY_PARTS = [
 
 const GROUPS = ['UPPER BODY', 'CORE', 'LOWER BODY']
 
-function BodyParts({ onNext }: { onNext: () => void }) {
+function BodyParts({ onNext, goals }: { onNext: () => void, goals: string[] }) {
   const [selected, setSelected] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
   const toggle = (id: string) =>
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+
+  const handleContinue = async () => {
+    if (selected.length === 0) return
+    setSaving(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          goals,
+          body_parts: selected,
+        })
+      }
+    } catch (e) {
+      console.log('Save error:', e)
+    } finally {
+      setSaving(false)
+      onNext()
+    }
+  }
+
   return (
     <View style={s.screen}>
       <StatusBar style="dark" />
@@ -165,11 +188,11 @@ function BodyParts({ onNext }: { onNext: () => void }) {
         ))}
       </View>
       <TouchableOpacity
-        style={[s.btnMain, selected.length === 0 && s.btnDisabled]}
-        onPress={onNext}
-        disabled={selected.length === 0}
+        style={[s.btnMain, (selected.length === 0 || saving) && s.btnDisabled]}
+        onPress={handleContinue}
+        disabled={selected.length === 0 || saving}
       >
-        <Text style={s.btnMainText}>Continue</Text>
+        <Text style={s.btnMainText}>{saving ? 'Saving...' : 'Continue'}</Text>
       </TouchableOpacity>
     </View>
   )
