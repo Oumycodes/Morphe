@@ -1,9 +1,11 @@
 import { StatusBar } from 'expo-status-bar'
 import { StyleSheet, Text, View, TouchableOpacity } from 'react-native'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ScanScreen from './src/screens/ScanScreen'
 import DashboardScreen from './src/screens/DashboardScreen'
 import ResultsScreen from './src/screens/ResultsScreen'
+import AuthScreen from './src/screens/AuthScreen'
+import { supabase } from './src/lib/supabase'
 
 const colors = {
   primary: '#1746A2',
@@ -20,7 +22,23 @@ const colors = {
 type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'dashboard' | 'results' | 'done'
 
 export default function App() {
+  const [session, setSession] = useState<any>(null)
   const [screen, setScreen] = useState<Screen>('splash')
+  const [checked, setChecked] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setChecked(true)
+    })
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+  }, [])
+
+  if (!checked) return null
+  if (!session) return <AuthScreen onAuth={() => setScreen('splash')} />
+
   if (screen === 'splash') return <Splash onNext={() => setScreen('goals')} />
   if (screen === 'goals') return <Goals onNext={() => setScreen('bodyparts')} />
   if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} />
