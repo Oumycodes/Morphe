@@ -28,12 +28,25 @@ export default function App() {
   const [goals, setGoals] = useState<string[]>([])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session)
+      if (session) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('body_parts')
+          .eq('id', session.user.id)
+          .single()
+        if (profile?.body_parts && profile.body_parts.length > 0) {
+          setScreen('dashboard')
+        } else {
+          setScreen('splash')
+        }
+      }
       setChecked(true)
     })
     supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
+      if (!session) setScreen('splash')
     })
   }, [])
 

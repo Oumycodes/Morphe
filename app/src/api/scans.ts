@@ -25,35 +25,46 @@ export async function canScan(retake = false): Promise<{ allowed: boolean, reaso
   return response.json()
 }
 
-export async function submitScan(photoUri: string, isRetake = false): Promise<any> {
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not logged in')
-
-  // 1. Send photo to backend for CV measurement
+async function sendPhoto(uri: string, endpoint: string): Promise<any> {
   const formData = new FormData()
-  formData.append('file', { uri: photoUri, type: 'image/jpeg', name: 'scan.jpg' } as any)
-
-  const response = await fetch(`${BACKEND_URL}/scan`, {
+  formData.append('file', { uri, type: 'image/jpeg', name: 'scan.jpg' } as any)
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     method: 'POST',
     body: formData,
     headers: { 'Content-Type': 'multipart/form-data' },
   })
-
   if (!response.ok) {
     const err = await response.json()
     throw new Error(err.detail || 'Scan failed')
   }
+  return response.json()
+}
 
-  const { measurements } = await response.json()
+export async function submitScan(
+  frontUri: string,
+  sideUri: string,
+  isRetake = false
+): Promise<any> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not logged in')
 
-  // 2. Get all previous scans
+  const [frontResult, sideResult] = await Promise.all([
+    sendPhoto(frontUri, '/scan/front'),
+    sendPhoto(sideUri, '/scan/side'),
+  ])
+
+  const measurements = {
+    ...frontResult.measurements,
+    ...sideResult.measurements,
+  }
+
   const { data: allScans } = await supabase
     .from('scans')
     .select('*')
     .eq('user_id', user.id)
     .order('created_at', { ascending: true })
 
-  const realScans = allScans?.filter(s => !s.is_retake) || []
+  const realScans = allScans?.filter((s: any) => !s.is_retake) || []
   const lastRealScan = realScans[realScans.length - 1] || null
   const firstScan = realScans[0] || null
 
@@ -61,9 +72,10 @@ export async function submitScan(photoUri: string, isRetake = false): Promise<an
     shoulder_ratio: lastRealScan.shoulder_ratio,
     hip_ratio: lastRealScan.hip_ratio,
     waist_ratio: lastRealScan.waist_ratio,
+    glute_projection_ratio: lastRealScan.glute_projection_ratio,
+    waist_depth_ratio: lastRealScan.waist_depth_ratio,
   } : null
 
-  // 3. Get user goals
   const { data: profile } = await supabase
     .from('profiles')
     .select('goals')
@@ -72,7 +84,6 @@ export async function submitScan(photoUri: string, isRetake = false): Promise<an
 
   const goals = profile?.goals || []
 
-  // 4. Calculate score with cycle number
   const scoreResponse = await fetch(`${BACKEND_URL}/score`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -87,7 +98,6 @@ export async function submitScan(photoUri: string, isRetake = false): Promise<an
 
   const scoreData = await scoreResponse.json()
 
-  // 5. Save scan — cycle number from backend, not total count
   const { data: savedScan, error } = await supabase
     .from('scans')
     .insert({
@@ -97,6 +107,9 @@ export async function submitScan(photoUri: string, isRetake = false): Promise<an
       hip_ratio: measurements.hip_ratio,
       waist_ratio: measurements.waist_ratio,
       torso_px: measurements.torso_px,
+      glute_projection_ratio: measurements.glute_projection_ratio,
+      waist_depth_ratio: measurements.waist_depth_ratio,
+      torso_px_side: measurements.torso_px_side,
       score: scoreData.score,
       is_retake: isRetake,
     })
