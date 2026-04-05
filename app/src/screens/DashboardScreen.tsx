@@ -22,7 +22,6 @@ const colors = {
   },
 }
 
-// Cache persists between navigation — no loading flicker
 let cachedData: any = null
 
 function getScoreColor(score: number) {
@@ -42,9 +41,11 @@ function getHour() {
 export default function DashboardScreen({
   onScan,
   onResults,
+  onScanAllowedChange,
 }: {
   onScan: () => void
   onResults: () => void
+  onScanAllowedChange?: (allowed: boolean) => void
 }) {
   const [latestScan, setLatestScan] = useState<any>(cachedData?.latestScan || null)
   const [scans, setScans] = useState<any[]>(cachedData?.scans || [])
@@ -66,16 +67,12 @@ export default function DashboardScreen({
 
       const firstName = profileRes.data?.name?.split(' ')[0] || user.email?.split('@')[0] || 'there'
 
-      cachedData = {
-        latestScan: latest,
-        scans: allScans,
-        scanAllowed: scanCheck,
-        name: firstName,
-      }
+      cachedData = { latestScan: latest, scans: allScans, scanAllowed: scanCheck, name: firstName }
 
       setLatestScan(latest)
       setScans(allScans)
       setScanAllowed(scanCheck)
+      onScanAllowedChange?.(scanCheck?.allowed ?? true)
       setName(firstName)
     } catch (e) {
       console.log('Dashboard load error:', e)
@@ -84,9 +81,7 @@ export default function DashboardScreen({
     }
   }, [])
 
-  useEffect(() => {
-    loadData()
-  }, [])
+  useEffect(() => { loadData() }, [])
 
   const score = latestScan?.score || 0
   const sc = getScoreColor(score)
@@ -99,6 +94,11 @@ export default function DashboardScreen({
     { id: 'shoulders', label: 'Shoulders', pct: ((current.shoulder_ratio - previous.shoulder_ratio) / previous.shoulder_ratio * 100), weeks: cycleNumber },
     { id: 'hips', label: 'Hips', pct: ((current.hip_ratio - previous.hip_ratio) / previous.hip_ratio * 100), weeks: cycleNumber },
     { id: 'waist', label: 'Waist', pct: ((current.waist_ratio - previous.waist_ratio) / previous.waist_ratio * 100), weeks: cycleNumber },
+    ...(current.glute_projection_ratio && previous.glute_projection_ratio ? [{
+      id: 'glutes', label: 'Glutes',
+      pct: ((current.glute_projection_ratio - previous.glute_projection_ratio) / previous.glute_projection_ratio * 100),
+      weeks: cycleNumber,
+    }] : []),
   ] : []
 
   const streak = realScans.length
@@ -167,9 +167,7 @@ export default function DashboardScreen({
           <>
             <Text style={s.sectionTitle}>Muscle tracking</Text>
             <View style={s.grid}>
-              {muscleDeltas.map(m => (
-                <MuscleCard key={m.id} {...m} />
-              ))}
+              {muscleDeltas.map(m => <MuscleCard key={m.id} {...m} />)}
               <TouchableOpacity style={s.scanNowCard} onPress={onResults}>
                 <Text style={s.scanNowWeek}>Cycle {cycleNumber}</Text>
                 <Text style={s.scanNowLabel}>Results</Text>
@@ -200,17 +198,6 @@ export default function DashboardScreen({
         )}
 
       </ScrollView>
-
-      <View style={s.nav}>
-        <NavItem label="Home" active />
-        <NavItem
-          label="Scan"
-          onPress={scanAllowed?.allowed ? onScan : undefined}
-          disabled={!scanAllowed?.allowed}
-        />
-        <NavItem label="Progress" onPress={onResults} />
-        <NavItem label="Profile" />
-      </View>
     </View>
   )
 }
@@ -233,21 +220,9 @@ function MuscleCard({ label, pct, weeks }: { label: string; pct: number; weeks: 
   )
 }
 
-function NavItem({ label, active, onPress, disabled }: {
-  label: string; active?: boolean; onPress?: () => void; disabled?: boolean
-}) {
-  return (
-    <TouchableOpacity style={s.navItem} onPress={onPress} disabled={disabled}>
-      <Text style={[s.navLabel, active && s.navLabelActive, disabled && s.navLabelDisabled]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  )
-}
-
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: 20, paddingTop: 60, paddingBottom: 100 },
+  scroll: { padding: 20, paddingTop: 60, paddingBottom: 120 },
   header: {
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center', marginBottom: 20,
@@ -326,15 +301,4 @@ const s = StyleSheet.create({
   },
   needMoreScansTitle: { fontSize: 14, fontWeight: '700', color: colors.ink, marginBottom: 4 },
   needMoreScansSub: { fontSize: 12, color: colors.muted, textAlign: 'center' },
-  nav: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', backgroundColor: colors.surface,
-    borderTopWidth: 0.5, borderTopColor: colors.border,
-    paddingBottom: 34, paddingTop: 12,
-    zIndex: 100, elevation: 10,
-  },
-  navItem: { flex: 1, alignItems: 'center', paddingVertical: 4 },
-  navLabel: { fontSize: 11, fontWeight: '600', color: colors.hint },
-  navLabelActive: { color: colors.primary },
-  navLabelDisabled: { color: colors.border },
 })

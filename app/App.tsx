@@ -21,11 +21,81 @@ const colors = {
 
 type Screen = 'splash' | 'goals' | 'bodyparts' | 'scan' | 'dashboard' | 'results' | 'done'
 
+function IconHome({ active }: { active?: boolean }) {
+  const c = active ? colors.primary : colors.hint
+  return (
+    <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: 0, height: 0, borderLeftWidth: 12, borderRightWidth: 12, borderBottomWidth: 8, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: c, marginBottom: 0 }} />
+      <View style={{ width: 18, height: 11, backgroundColor: c, borderBottomLeftRadius: 2, borderBottomRightRadius: 2 }} />
+    </View>
+  )
+}
+
+function IconProgress({ active }: { active?: boolean }) {
+  const c = active ? colors.primary : colors.hint
+  return (
+    <View style={{ width: 24, height: 24, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 3, paddingBottom: 1 }}>
+      <View style={{ width: 5, height: 9, backgroundColor: c, borderRadius: 2 }} />
+      <View style={{ width: 5, height: 14, backgroundColor: c, borderRadius: 2 }} />
+      <View style={{ width: 5, height: 11, backgroundColor: c, borderRadius: 2 }} />
+      <View style={{ width: 5, height: 19, backgroundColor: c, borderRadius: 2 }} />
+    </View>
+  )
+}
+
+function IconProfile({ active }: { active?: boolean }) {
+  const c = active ? colors.primary : colors.hint
+  return (
+    <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+      <View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: c }} />
+      <View style={{ width: 17, height: 7, borderTopLeftRadius: 9, borderTopRightRadius: 9, borderWidth: 2, borderColor: c, borderBottomWidth: 0 }} />
+    </View>
+  )
+}
+
+function PersistentNav({
+  screen,
+  setScreen,
+  scanAllowed,
+}: {
+  screen: Screen
+  setScreen: (s: Screen) => void
+  scanAllowed: boolean
+}) {
+  return (
+    <View style={nav.wrap}>
+      <View style={nav.pill}>
+        <TouchableOpacity style={nav.item} onPress={() => setScreen('dashboard')}>
+          <IconHome active={screen === 'dashboard'} />
+          <Text style={[nav.label, screen === 'dashboard' && nav.labelActive]}>Home</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={nav.item} onPress={() => setScreen('results')}>
+          <IconProgress active={screen === 'results'} />
+          <Text style={[nav.label, screen === 'results' && nav.labelActive]}>Progress</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={nav.item}>
+          <IconProfile active={false} />
+          <Text style={nav.label}>Profile</Text>
+        </TouchableOpacity>
+      </View>
+      <TouchableOpacity
+        style={[nav.fab, !scanAllowed && nav.fabDisabled]}
+        onPress={scanAllowed ? () => setScreen('scan') : undefined}
+        activeOpacity={0.85}
+      >
+        <View style={nav.fabH} />
+        <View style={nav.fabV} />
+      </TouchableOpacity>
+    </View>
+  )
+}
+
 export default function App() {
   const [session, setSession] = useState<any>(null)
   const [screen, setScreen] = useState<Screen>('splash')
   const [checked, setChecked] = useState(false)
   const [goals, setGoals] = useState<string[]>([])
+  const [scanAllowed, setScanAllowed] = useState(true)
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -36,11 +106,7 @@ export default function App() {
           .select('body_parts')
           .eq('id', session.user.id)
           .single()
-        if (profile?.body_parts && profile.body_parts.length > 0) {
-          setScreen('dashboard')
-        } else {
-          setScreen('splash')
-        }
+        setScreen(profile?.body_parts?.length > 0 ? 'dashboard' : 'splash')
       }
       setChecked(true)
     })
@@ -53,22 +119,43 @@ export default function App() {
   if (!checked) return null
   if (!session) return <AuthScreen onAuth={() => setScreen('splash')} />
 
-  if (screen === 'splash') return <Splash onNext={() => setScreen('goals')} />
-  if (screen === 'goals') return <Goals onNext={(g) => { setGoals(g); setScreen('bodyparts') }} />
-  if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} goals={goals} />
-  if (screen === 'scan') return <ScanScreen onBack={() => setScreen('dashboard')} />
-  if (screen === 'dashboard') return <DashboardScreen onScan={() => setScreen('scan')} onResults={() => setScreen('results')} />
-  if (screen === 'results') return <ResultsScreen onBack={() => setScreen('dashboard')} />
-  return <Done onScan={() => setScreen('scan')} />
+  const showNav = screen === 'dashboard' || screen === 'results'
+
+  const renderScreen = () => {
+    if (screen === 'splash') return <Splash onNext={() => setScreen('goals')} />
+    if (screen === 'goals') return <Goals onNext={(g) => { setGoals(g); setScreen('bodyparts') }} />
+    if (screen === 'bodyparts') return <BodyParts onNext={() => setScreen('dashboard')} goals={goals} />
+    if (screen === 'scan') return <ScanScreen onBack={() => setScreen('dashboard')} />
+    if (screen === 'dashboard') return (
+      <DashboardScreen
+        onScan={() => setScreen('scan')}
+        onResults={() => setScreen('results')}
+        onScanAllowedChange={setScanAllowed}
+      />
+    )
+    if (screen === 'results') return <ResultsScreen />
+    return <Done onScan={() => setScreen('scan')} />
+  }
+
+  return (
+    <View style={{ flex: 1 }}>
+      {renderScreen()}
+      {showNav && (
+        <PersistentNav
+          screen={screen}
+          setScreen={setScreen}
+          scanAllowed={scanAllowed}
+        />
+      )}
+    </View>
+  )
 }
 
 function Splash({ onNext }: { onNext: () => void }) {
   return (
     <View style={[s.screen, { justifyContent: 'center' }]}>
       <StatusBar style="dark" />
-      <View style={s.logoBox}>
-        <Text style={s.logoLetter}>M</Text>
-      </View>
+      <View style={s.logoBox}><Text style={s.logoLetter}>M</Text></View>
       <Text style={s.title}>Morphe</Text>
       <Text style={s.subtitle}>Watch your body transform,{'\n'}one scan at a time.</Text>
       <TouchableOpacity style={s.btnMain} onPress={onNext}>
@@ -157,11 +244,7 @@ function BodyParts({ onNext, goals }: { onNext: () => void, goals: string[] }) {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        await supabase.from('profiles').upsert({
-          id: user.id,
-          goals,
-          body_parts: selected,
-        })
+        await supabase.from('profiles').upsert({ id: user.id, goals, body_parts: selected })
       }
     } catch (e) {
       console.log('Save error:', e)
@@ -215,9 +298,7 @@ function Done({ onScan }: { onScan: () => void }) {
   return (
     <View style={[s.screen, { justifyContent: 'center', alignItems: 'center' }]}>
       <StatusBar style="dark" />
-      <View style={s.doneIcon}>
-        <Text style={{ fontSize: 32 }}>✓</Text>
-      </View>
+      <View style={s.doneIcon}><Text style={{ fontSize: 32 }}>✓</Text></View>
       <Text style={[s.title, { textAlign: 'center' }]}>You're all set.</Text>
       <Text style={[s.subtitle, { textAlign: 'center' }]}>
         Morphe will track exactly what you chose.{'\n'}Take your first scan to set your baseline.
@@ -228,6 +309,36 @@ function Done({ onScan }: { onScan: () => void }) {
     </View>
   )
 }
+
+const nav = StyleSheet.create({
+  wrap: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 16, paddingBottom: 32, paddingTop: 8,
+    gap: 10,
+  },
+  pill: {
+    flex: 1, flexDirection: 'row', backgroundColor: colors.surface,
+    borderRadius: 28, paddingVertical: 10, paddingHorizontal: 16,
+    justifyContent: 'space-around', alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 16, elevation: 8,
+    borderWidth: 0.5, borderColor: colors.border,
+  },
+  item: { alignItems: 'center', gap: 3, paddingHorizontal: 8, paddingVertical: 2 },
+  label: { fontSize: 10, fontWeight: '600', color: colors.hint },
+  labelActive: { color: colors.primary },
+  fab: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 12, elevation: 8,
+    flexShrink: 0,
+  },
+  fabDisabled: { backgroundColor: colors.hint, shadowOpacity: 0 },
+  fabH: { width: 18, height: 2.5, backgroundColor: 'white', borderRadius: 2, position: 'absolute' },
+  fabV: { width: 2.5, height: 18, backgroundColor: 'white', borderRadius: 2, position: 'absolute' },
+})
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background, padding: 28, paddingTop: 60 },
