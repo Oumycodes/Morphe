@@ -1,8 +1,9 @@
+.DS_Store
+*.key
+*.onnx
+*.task
 node_modules/
-.env
-.env.local
-__pycache__/
-*.pyc
-.venv/
-dist/
 .expo/
+__pycache__/
+.env
+.venv/
